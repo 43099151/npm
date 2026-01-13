@@ -34,10 +34,8 @@ FROM node:20-alpine
 ENV TS_SOCKET=/tmp/tailscaled.sock
 ENV NPM_HOME=/data/npm
 
-# 修复点 1: cron -> dcron
-# 修复点 2: 添加 unzip (后面解压 rclone 需要)
-# 修复点 3: 添加 nginx, apache2-utils (NPM 核心依赖)
-RUN apk update && apk add --no-cache \
+# 1. 安装核心依赖（注意加入了 wget, nginx, apache2-utils）
+RUN apk add --no-cache \
     bash \
     ca-certificates \
     tzdata \
@@ -52,23 +50,24 @@ RUN apk update && apk add --no-cache \
     apache2-utils \
     wget
 
-# Tailscale (static)
-RUN wget -qO- https://pkgs.tailscale.com/stable/tailscale-linux-amd64.tgz \
-    | tar xz \
-    && mv tailscale*/tailscale* /usr/local/bin/ \
-    && rm -rf tailscale*
+# 2. 安装 Tailscale（分步执行，去掉了 -q 以便看到下载进度和错误）
+# 如果这一步报错，说明您的构建环境无法连接 pkgs.tailscale.com
+RUN wget https://pkgs.tailscale.com/stable/tailscale-linux-amd64.tgz -O /tmp/tailscale.tgz \
+    && tar xzf /tmp/tailscale.tgz -C /tmp \
+    && mv /tmp/tailscale*/tailscale /usr/local/bin/tailscale \
+    && mv /tmp/tailscale*/tailscaled /usr/local/bin/tailscaled \
+    && rm -rf /tmp/tailscale* /tmp/tailscale.tgz
 
-# rclone (static)
-# 这里之前会报错，因为上面补全了 unzip，现在可以通过了
-RUN wget -qO- https://downloads.rclone.org/rclone-current-linux-amd64.zip \
-    | unzip -q - \
-    && mv rclone*/rclone /usr/bin/rclone \
+# 3. 安装 Rclone
+RUN wget https://downloads.rclone.org/rclone-current-linux-amd64.zip -O /tmp/rclone.zip \
+    && unzip -q /tmp/rclone.zip -d /tmp \
+    && mv /tmp/rclone*/rclone /usr/bin/rclone \
     && chmod +x /usr/bin/rclone \
-    && rm -rf rclone*
+    && rm -rf /tmp/rclone*
 
 COPY --from=build /app /app
 
-# 创建 Nginx 需要的运行目录，防止启动报错
+# 4. 创建必要的目录
 RUN mkdir -p \
     /data/npm \
     /data/tailscale \
@@ -81,14 +80,12 @@ RUN mkdir -p \
 COPY entrypoint.sh /scripts/
 COPY backup.sh /scripts/
 COPY restore.sh /scripts/
-# 确保这个文件在你本地存在，或者删除这行
-COPY rclone.conf.template /data/rclone/rclone.conf 
+# 如果您本地没有 rclone.conf.template，请注释掉下面这行
+# COPY rclone.conf.template /data/rclone/rclone.conf 
 
 RUN chmod +x /scripts/*.sh
 
-# 你暴露的是 7860 端口 (Hugging Face常用端口)
-# 记得在 entrypoint.sh 里配置 NPM 监听这个端口，否则默认是 81
-EXPOSE 7860
+EXPOSE 81 443 7860
 
 WORKDIR /app
 ENTRYPOINT ["/scripts/entrypoint.sh"]
