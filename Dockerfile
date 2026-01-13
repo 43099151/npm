@@ -37,7 +37,7 @@ ENV NPM_HOME=/data/npm
 # 修复点 1: cron -> dcron
 # 修复点 2: 添加 unzip (后面解压 rclone 需要)
 # 修复点 3: 添加 nginx, apache2-utils (NPM 核心依赖)
-RUN apk add --no-cache \
+RUN apk update && apk add --no-cache \
     bash \
     ca-certificates \
     tzdata \
@@ -49,7 +49,8 @@ RUN apk add --no-cache \
     gzip \
     unzip \
     nginx \
-    apache2-utils
+    apache2-utils \
+    wget
 
 # Tailscale (static)
 RUN wget -qO- https://pkgs.tailscale.com/stable/tailscale-linux-amd64.tgz \
