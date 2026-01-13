@@ -4,11 +4,11 @@ FROM jc21/nginx-proxy-manager:latest
 # 设置环境变量
 ENV DEBIAN_FRONTEND=noninteractive
 
-# 1. 安装系统基础依赖
-# 新增: unzip (Rclone 脚本必须)
-# 新增: apt-transport-https (防止某些源报错)
-# 修改: apt-get update 后面加上 || true 防止偶发报错中断构建
-RUN (apt-get update || true) && \
+# 1. 安装系统依赖
+# 关键修复：先删除 /var/lib/apt/lists/* 以解决 "exit code 100" 的列表损坏问题
+# 安装 unzip 用于解压 rclone
+RUN rm -rf /var/lib/apt/lists/* && \
+    apt-get update && \
     apt-get install -y --no-install-recommends \
     curl \
     ca-certificates \
@@ -19,16 +19,22 @@ RUN (apt-get update || true) && \
     iptables \
     iproute2 \
     unzip \
-    apt-transport-https \
+    xz-utils \
     && \
-    # 2. 手动安装 Tailscale (静态二进制包)
+    # 2. 安装 Tailscale (静态二进制)
+    echo "Installing Tailscale..." && \
     curl -fsSL "https://pkgs.tailscale.com/stable/tailscale_1.92.5_amd64.tgz" -o tailscale.tgz && \
     tar -xzf tailscale.tgz && \
     mv tailscale_1.92.5_amd64/tailscale /usr/bin/tailscale && \
     mv tailscale_1.92.5_amd64/tailscaled /usr/bin/tailscaled && \
     rm -rf tailscale.tgz tailscale_1.92.5_amd64 && \
-    # 3. 安装 Rclone (现在有了 unzip，这里可以通过了)
-    curl https://rclone.org/install.sh | bash && \
+    # 3. 安装 Rclone (静态二进制 - 避免脚本错误)
+    echo "Installing Rclone..." && \
+    curl -fsSL "https://downloads.rclone.org/v1.72.1/rclone-v1.72.1-linux-amd64.zip" -o rclone.zip && \
+    unzip rclone.zip && \
+    mv rclone-v1.72.1-linux-amd64/rclone /usr/bin/rclone && \
+    chmod +x /usr/bin/rclone && \
+    rm -rf rclone.zip rclone-v1.72.1-linux-amd64 && \
     # 4. 配置 SSH
     mkdir -p /var/run/sshd && \
     sed -i 's/#PermitRootLogin prohibit-password/PermitRootLogin yes/' /etc/ssh/sshd_config && \
