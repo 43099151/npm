@@ -36,7 +36,6 @@ RUN apk add --no-cache \
     bash \
     ca-certificates \
     tzdata \
-    sqlite \
     openssl \
     cron \
     tar \
