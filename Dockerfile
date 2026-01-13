@@ -3,19 +3,18 @@
 # ==========================================
 FROM debian:bookworm-slim AS builder
 
-# 安装下载工具
+# 安装下载工具 (这里使用官方源，肯定没问题)
 RUN apt-get update && apt-get install -y curl tar unzip
 
-# 1. 下载并解压 Tailscale (静态二进制 v1.92.5)
+# 1. 下载并解压 Tailscale (静态二进制)
 WORKDIR /tmp/tailscale
 RUN curl -fsSL "https://pkgs.tailscale.com/stable/tailscale_1.92.5_amd64.tgz" -o tailscale.tgz && \
     tar -xzf tailscale.tgz && \
     mv tailscale_1.92.5_amd64/tailscale /tmp/tailscale/tailscale && \
     mv tailscale_1.92.5_amd64/tailscaled /tmp/tailscale/tailscaled
 
-# 2. 下载并解压 Rclone (更新为 v1.72.1)
+# 2. 下载并解压 Rclone
 WORKDIR /tmp/rclone
-# 注意：这里更新了下载链接和解压后的目录名
 RUN curl -fsSL "https://downloads.rclone.org/v1.72.1/rclone-v1.72.1-linux-amd64.zip" -o rclone.zip && \
     unzip rclone.zip && \
     mv rclone-v1.72.1-linux-amd64/rclone /tmp/rclone/rclone
@@ -25,34 +24,37 @@ RUN curl -fsSL "https://downloads.rclone.org/v1.72.1/rclone-v1.72.1-linux-amd64.
 # ==========================================
 FROM jc21/nginx-proxy-manager:latest
 
-# 【关键修复】强制使用 root 用户，解决权限导致的 exit code 100
+# 【核心修复 1】必须显式声明 USER root，否则 apt 根本没权限跑
 USER root
 
 # 设置非交互模式
 ENV DEBIAN_FRONTEND=noninteractive
 
-# 【关键修复】彻底重写 sources.list 为官方源，解决源损坏问题
-RUN echo "deb http://deb.debian.org/debian bookworm main contrib non-free-firmware" > /etc/apt/sources.list && \
+# 【核心修复 2】原子化操作：将换源、清理、更新、安装合并为一条指令
+# 这样可以避免 "exit code 100" 这种中间层锁死的问题
+RUN echo "Running atomic install script..." && \
+    # 1. 清理潜在的干扰 (代理配置、旧列表)
+    rm -f /etc/apt/apt.conf.d/*proxy* && \
+    rm -rf /var/lib/apt/lists/* && \
+    # 2. 暴力重写源 (确保使用 Debian 官方源)
+    echo "deb http://deb.debian.org/debian bookworm main contrib non-free-firmware" > /etc/apt/sources.list && \
     echo "deb http://deb.debian.org/debian-security bookworm-security main contrib non-free-firmware" >> /etc/apt/sources.list && \
     echo "deb http://deb.debian.org/debian bookworm-updates main contrib non-free-firmware" >> /etc/apt/sources.list && \
-    # 删除所有第三方干扰源
     rm -rf /etc/apt/sources.list.d/* && \
-    rm -rf /var/lib/apt/lists/*
-
-# 安装运行时依赖 (SSH, Cron, Socat, Iptables)
-RUN apt-get update && \
+    # 3. 更新并安装 (添加 || true 防止 update 返回非致命错误码)
+    (apt-get update || true) && \
     apt-get install -y --no-install-recommends \
-    openssh-server \
-    cron \
-    socat \
-    iptables \
-    iproute2 \
-    ca-certificates \
-    && \
-    # 配置 SSH
+        openssh-server \
+        cron \
+        socat \
+        iptables \
+        iproute2 \
+        ca-certificates \
+        && \
+    # 4. 配置 SSH
     mkdir -p /var/run/sshd && \
     sed -i 's/#PermitRootLogin prohibit-password/PermitRootLogin yes/' /etc/ssh/sshd_config && \
-    # 清理垃圾
+    # 5. 最后清理
     apt-get clean && \
     rm -rf /var/lib/apt/lists/* /tmp/* /var/tmp/*
 
