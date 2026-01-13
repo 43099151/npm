@@ -1,13 +1,14 @@
 # ==========================================
 # 阶段 1: 下载工具 (使用干净的 Debian 镜像)
 # ==========================================
-FROM debian:bookworm-slim AS builder
+FROM debian:bullseye-slim AS builder
 
-# 安装下载工具 (这里使用官方源，肯定没问题)
+# 安装下载工具
 RUN apt-get update && apt-get install -y curl tar unzip
 
 # 1. 下载并解压 Tailscale (静态二进制)
 WORKDIR /tmp/tailscale
+# 使用你指定的版本
 RUN curl -fsSL "https://pkgs.tailscale.com/stable/tailscale_1.92.5_amd64.tgz" -o tailscale.tgz && \
     tar -xzf tailscale.tgz && \
     mv tailscale_1.92.5_amd64/tailscale /tmp/tailscale/tailscale && \
@@ -15,6 +16,7 @@ RUN curl -fsSL "https://pkgs.tailscale.com/stable/tailscale_1.92.5_amd64.tgz" -o
 
 # 2. 下载并解压 Rclone
 WORKDIR /tmp/rclone
+# 使用最新的 1.72.1
 RUN curl -fsSL "https://downloads.rclone.org/v1.72.1/rclone-v1.72.1-linux-amd64.zip" -o rclone.zip && \
     unzip rclone.zip && \
     mv rclone-v1.72.1-linux-amd64/rclone /tmp/rclone/rclone
@@ -24,25 +26,28 @@ RUN curl -fsSL "https://downloads.rclone.org/v1.72.1/rclone-v1.72.1-linux-amd64.
 # ==========================================
 FROM jc21/nginx-proxy-manager:latest
 
-# 【核心修复 1】必须显式声明 USER root，否则 apt 根本没权限跑
+# 【关键点 1】强制 Root 权限
 USER root
 
 # 设置非交互模式
 ENV DEBIAN_FRONTEND=noninteractive
 
-# 【核心修复 2】原子化操作：将换源、清理、更新、安装合并为一条指令
-# 这样可以避免 "exit code 100" 这种中间层锁死的问题
+# 【关键点 2】使用 Bullseye 源 (Debian 11) 以匹配基础镜像
+# 同时清理 OpenResty 等可能导致超时的第三方源
 RUN echo "Running atomic install script..." && \
-    # 1. 清理潜在的干扰 (代理配置、旧列表)
-    rm -f /etc/apt/apt.conf.d/*proxy* && \
-    rm -rf /var/lib/apt/lists/* && \
-    # 2. 暴力重写源 (确保使用 Debian 官方源)
-    echo "deb http://deb.debian.org/debian bookworm main contrib non-free-firmware" > /etc/apt/sources.list && \
-    echo "deb http://deb.debian.org/debian-security bookworm-security main contrib non-free-firmware" >> /etc/apt/sources.list && \
-    echo "deb http://deb.debian.org/debian bookworm-updates main contrib non-free-firmware" >> /etc/apt/sources.list && \
+    # 1. 清除锁文件 (防止之前的构建残留锁死 dpkg)
+    rm -f /var/lib/dpkg/lock* && \
+    rm -f /var/cache/apt/archives/lock && \
+    rm -f /var/lib/apt/lists/lock && \
+    # 2. 移除不稳定的第三方源
     rm -rf /etc/apt/sources.list.d/* && \
-    # 3. 更新并安装 (添加 || true 防止 update 返回非致命错误码)
-    (apt-get update || true) && \
+    rm -rf /var/lib/apt/lists/* && \
+    # 3. 写入 Bullseye 官方源 (使用 http 避免 https 证书问题，Debian 官方支持 http)
+    echo "deb http://deb.debian.org/debian bullseye main contrib non-free" > /etc/apt/sources.list && \
+    echo "deb http://deb.debian.org/debian-security bullseye-security main contrib non-free" >> /etc/apt/sources.list && \
+    echo "deb http://deb.debian.org/debian bullseye-updates main contrib non-free" >> /etc/apt/sources.list && \
+    # 4. 更新并安装 (增加 --allow-releaseinfo-change 以防源元数据变动)
+    apt-get update --allow-releaseinfo-change && \
     apt-get install -y --no-install-recommends \
         openssh-server \
         cron \
@@ -51,10 +56,10 @@ RUN echo "Running atomic install script..." && \
         iproute2 \
         ca-certificates \
         && \
-    # 4. 配置 SSH
+    # 5. 配置 SSH
     mkdir -p /var/run/sshd && \
     sed -i 's/#PermitRootLogin prohibit-password/PermitRootLogin yes/' /etc/ssh/sshd_config && \
-    # 5. 最后清理
+    # 6. 清理
     apt-get clean && \
     rm -rf /var/lib/apt/lists/* /tmp/* /var/tmp/*
 
