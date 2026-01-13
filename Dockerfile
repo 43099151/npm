@@ -5,9 +5,10 @@ FROM jc21/nginx-proxy-manager:latest
 ENV DEBIAN_FRONTEND=noninteractive
 
 # 1. 安装系统基础依赖
-# 注意：必须显式安装 iptables，否则 --advertise-exit-node 会报错
-# ca-certificates 用于 HTTPS 验证
-RUN apt-get update && \
+# 新增: unzip (Rclone 脚本必须)
+# 新增: apt-transport-https (防止某些源报错)
+# 修改: apt-get update 后面加上 || true 防止偶发报错中断构建
+RUN (apt-get update || true) && \
     apt-get install -y --no-install-recommends \
     curl \
     ca-certificates \
@@ -17,17 +18,16 @@ RUN apt-get update && \
     gnupg \
     iptables \
     iproute2 \
+    unzip \
+    apt-transport-https \
     && \
     # 2. 手动安装 Tailscale (静态二进制包)
-    # 直接下载你指定的版本
     curl -fsSL "https://pkgs.tailscale.com/stable/tailscale_1.92.5_amd64.tgz" -o tailscale.tgz && \
     tar -xzf tailscale.tgz && \
-    # 将二进制文件移动到系统路径
     mv tailscale_1.92.5_amd64/tailscale /usr/bin/tailscale && \
     mv tailscale_1.92.5_amd64/tailscaled /usr/bin/tailscaled && \
-    # 清理下载文件
     rm -rf tailscale.tgz tailscale_1.92.5_amd64 && \
-    # 3. 安装 Rclone
+    # 3. 安装 Rclone (现在有了 unzip，这里可以通过了)
     curl https://rclone.org/install.sh | bash && \
     # 4. 配置 SSH
     mkdir -p /var/run/sshd && \
