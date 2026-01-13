@@ -1,7 +1,7 @@
 ############################
 # Stage 1: build NPM
 ############################
-FROM node:20-alpine AS build
+FROM node:20-alpine3.18 AS build
 
 RUN apk add --no-cache \
     bash \
