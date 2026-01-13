@@ -1,10 +1,12 @@
-# 基础镜像使用 Nginx Proxy Manager 官方镜像
+# 基础镜像
 FROM jc21/nginx-proxy-manager:latest
 
-# 设置环境变量，防止交互式安装卡住
+# 设置环境变量
 ENV DEBIAN_FRONTEND=noninteractive
 
-# 安装必要的工具：Tailscale, Rclone, SSH, Cron, Socat, Vim
+# 1. 安装系统基础依赖
+# 注意：必须显式安装 iptables，否则 --advertise-exit-node 会报错
+# ca-certificates 用于 HTTPS 验证
 RUN apt-get update && \
     apt-get install -y --no-install-recommends \
     curl \
@@ -13,31 +15,36 @@ RUN apt-get update && \
     cron \
     socat \
     gnupg \
+    iptables \
+    iproute2 \
     && \
-    # 安装 Tailscale
-    mkdir -p --mode=0755 /usr/share/keyrings && \
-    curl -fsSL https://pkgs.tailscale.com/stable/ubuntu/jammy.noarmor.gpg | tee /usr/share/keyrings/tailscale-archive-keyring.gpg >/dev/null && \
-    curl -fsSL https://pkgs.tailscale.com/stable/ubuntu/jammy.tailscale-keyring.list | tee /etc/apt/sources.list.d/tailscale.list && \
-    apt-get update && \
-    apt-get install -y tailscale && \
-    # 安装 Rclone
+    # 2. 手动安装 Tailscale (静态二进制包)
+    # 直接下载你指定的版本
+    curl -fsSL "https://pkgs.tailscale.com/stable/tailscale_1.92.5_amd64.tgz" -o tailscale.tgz && \
+    tar -xzf tailscale.tgz && \
+    # 将二进制文件移动到系统路径
+    mv tailscale_1.92.5_amd64/tailscale /usr/bin/tailscale && \
+    mv tailscale_1.92.5_amd64/tailscaled /usr/bin/tailscaled && \
+    # 清理下载文件
+    rm -rf tailscale.tgz tailscale_1.92.5_amd64 && \
+    # 3. 安装 Rclone
     curl https://rclone.org/install.sh | bash && \
-    # 配置 SSH 允许 Root 登录
+    # 4. 配置 SSH
     mkdir -p /var/run/sshd && \
     sed -i 's/#PermitRootLogin prohibit-password/PermitRootLogin yes/' /etc/ssh/sshd_config && \
-    # 清理缓存减小镜像体积
+    # 5. 清理缓存
     apt-get clean && \
     rm -rf /var/lib/apt/lists/* /tmp/* /var/tmp/*
 
-# 复制脚本到容器
+# 复制脚本
 COPY scripts/start.sh /usr/local/bin/start.sh
 COPY scripts/backup.sh /usr/local/bin/backup.sh
 
-# 赋予执行权限
+# 赋予权限
 RUN chmod +x /usr/local/bin/start.sh /usr/local/bin/backup.sh
 
-# 暴露端口 (HF 需要 7860)
+# 暴露端口
 EXPOSE 7860 80 81 443
 
-# 设置自定义入口点
+# 启动入口
 ENTRYPOINT ["/usr/local/bin/start.sh"]
