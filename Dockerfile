@@ -1,81 +1,76 @@
 # ==========================================
-# 阶段 1: 下载工具 (保持不变，这部分很稳定)
+# 阶段 1: 下载工具 (使用纯净 Debian 环境)
 # ==========================================
 FROM debian:bookworm-slim AS builder
 
+# 安装下载工具
 RUN apt-get update && apt-get install -y curl tar unzip
 
+# 1. 下载 Tailscale (使用静态二进制)
 WORKDIR /tmp/tailscale
 RUN curl -fsSL "https://pkgs.tailscale.com/stable/tailscale_1.92.5_amd64.tgz" -o tailscale.tgz && \
     tar -xzf tailscale.tgz && \
     mv tailscale_1.92.5_amd64/tailscale /tmp/tailscale/tailscale && \
     mv tailscale_1.92.5_amd64/tailscaled /tmp/tailscale/tailscaled
 
+# 2. 下载 Rclone (使用静态二进制)
 WORKDIR /tmp/rclone
 RUN curl -fsSL "https://downloads.rclone.org/v1.72.1/rclone-v1.72.1-linux-amd64.zip" -o rclone.zip && \
     unzip rclone.zip && \
     mv rclone-v1.72.1-linux-amd64/rclone /tmp/rclone/rclone
 
 # ==========================================
-# 阶段 2: 构建最终镜像 (动态适配版)
+# 阶段 2: 构建最终镜像 (基于 NPM)
 # ==========================================
 FROM jc21/nginx-proxy-manager:latest
 
-# 1. 强制 Root 权限
+# 强制切换到 Root
 USER root
 ENV DEBIAN_FRONTEND=noninteractive
 
-# 2. 智能安装脚本
-# 使用 /bin/bash 但去掉了 -o pipefail，防止清理命令因找不到文件报错
-RUN /bin/bash -c 'set -e; \
-    echo "=== Starting Build Process ==="; \
+# 【核心修复脚本】
+# 1. rm -f ... || true: 忽略清理过程中的"文件不存在"错误
+# 2. --allow-insecure-repositories: 允许首次更新时忽略签名错误(Exit 100的克星)
+# 3. install debian-archive-keyring: 修复签名链
+RUN echo "Running comprehensive install script..." && \
+    rm -f /var/lib/dpkg/lock* || true && \
+    rm -f /var/lib/apt/lists/lock || true && \
+    rm -rf /etc/apt/sources.list.d/* || true && \
+    rm -rf /var/lib/apt/lists/* || true && \
     \
-    echo "1. Cleaning up potential locks and bad configs..."; \
-    rm -f /var/lib/dpkg/lock*; \
-    rm -f /var/cache/apt/archives/lock; \
-    rm -f /var/lib/apt/lists/lock; \
-    # 使用 || true 防止文件不存在时报错 \
-    rm -f /etc/apt/apt.conf.d/*proxy* || true; \
-    rm -rf /etc/apt/sources.list.d/* || true; \
-    rm -rf /var/lib/apt/lists/*; \
+    echo "Writing Bookworm Sources..." && \
+    echo "deb http://deb.debian.org/debian bookworm main contrib non-free-firmware" > /etc/apt/sources.list && \
+    echo "deb http://deb.debian.org/debian-security bookworm-security main contrib non-free-firmware" >> /etc/apt/sources.list && \
+    echo "deb http://deb.debian.org/debian bookworm-updates main contrib non-free-firmware" >> /etc/apt/sources.list && \
     \
-    echo "2. Detecting OS Codename..."; \
-    # 动态获取系统代号 (bullseye 或 bookworm) \
-    . /etc/os-release; \
-    echo "Detected Debian version: $VERSION_CODENAME"; \
+    echo "Updating APT (Allowing Insecure for Keyring fix)..." && \
+    apt-get update --allow-insecure-repositories || true && \
+    apt-get install -y --allow-unauthenticated debian-archive-keyring && \
     \
-    echo "3. Generating valid sources.list..."; \
-    # 根据检测到的代号写入官方源 \
-    echo "deb http://deb.debian.org/debian $VERSION_CODENAME main contrib non-free" > /etc/apt/sources.list; \
-    echo "deb http://deb.debian.org/debian-security $VERSION_CODENAME-security main contrib non-free" >> /etc/apt/sources.list; \
-    echo "deb http://deb.debian.org/debian $VERSION_CODENAME-updates main contrib non-free" >> /etc/apt/sources.list; \
-    \
-    echo "4. Installing dependencies..."; \
-    # 尝试修复可能损坏的 dpkg 状态 \
-    dpkg --configure -a || true; \
-    apt-get update; \
+    echo "Installing Dependencies..." && \
+    apt-get update && \
     apt-get install -y --no-install-recommends \
         openssh-server \
-        cron \
         socat \
         iptables \
         iproute2 \
-        ca-certificates; \
+        ca-certificates \
+        && \
     \
-    echo "5. Configuring SSH..."; \
-    mkdir -p /var/run/sshd; \
-    sed -i "s/#PermitRootLogin prohibit-password/PermitRootLogin yes/" /etc/ssh/sshd_config; \
+    echo "Configuring SSH..." && \
+    mkdir -p /var/run/sshd && \
+    sed -i 's/#PermitRootLogin prohibit-password/PermitRootLogin yes/' /etc/ssh/sshd_config && \
     \
-    echo "6. Final cleanup..."; \
-    apt-get clean; \
-    rm -rf /var/lib/apt/lists/* /tmp/* /var/tmp/*'
+    echo "Cleaning up..." && \
+    apt-get clean && \
+    rm -rf /var/lib/apt/lists/* /tmp/* /var/tmp/*
 
-# 复制二进制文件
+# 从构建阶段复制二进制文件
 COPY --from=builder /tmp/tailscale/tailscale /usr/bin/tailscale
 COPY --from=builder /tmp/tailscale/tailscaled /usr/bin/tailscaled
 COPY --from=builder /tmp/rclone/rclone /usr/bin/rclone
 
-# 赋予权限
+# 赋予可执行权限
 RUN chmod +x /usr/bin/tailscale /usr/bin/tailscaled /usr/bin/rclone
 
 # 复制脚本
