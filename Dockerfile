@@ -32,7 +32,7 @@ FROM node:20-alpine
 ENV TS_SOCKET=/tmp/tailscaled.sock
 ENV NPM_HOME=/data/npm
 
-RUN apk add --no-cache \
+RUN apk update && apk add --no-cache \
     bash \
     ca-certificates \
     tzdata \
