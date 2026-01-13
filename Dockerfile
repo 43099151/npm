@@ -38,7 +38,6 @@ RUN apk add --no-cache \
     tzdata \
     sqlite \
     openssl \
-    iptables \
     cron \
     tar \
     gzip
