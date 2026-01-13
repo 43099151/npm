@@ -52,7 +52,7 @@ RUN apk add --no-cache \
 
 # 2. 安装 Tailscale（分步执行，去掉了 -q 以便看到下载进度和错误）
 # 如果这一步报错，说明您的构建环境无法连接 pkgs.tailscale.com
-RUN wget https://pkgs.tailscale.com/stable/tailscale-linux-amd64.tgz -O /tmp/tailscale.tgz \
+RUN wget https://pkgs.tailscale.com/stable/tailscale_1.92.5_amd64.tgz -O /tmp/tailscale.tgz \
     && tar xzf /tmp/tailscale.tgz -C /tmp \
     && mv /tmp/tailscale*/tailscale /usr/local/bin/tailscale \
     && mv /tmp/tailscale*/tailscaled /usr/local/bin/tailscaled \
