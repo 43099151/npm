@@ -2,7 +2,10 @@
 
 echo "[INFO] Starting Container..."
 
-# 1. Rclone 配置 (保持不变)
+# Define Tailscale Socket Location globally
+export TS_SOCKET=/tmp/tailscaled.sock
+
+# 1. Rclone Configuration
 if [ -n "$R2_ACCESS_KEY_ID" ]; then
     mkdir -p /root/.config/rclone
     cat <<EOF > /root/.config/rclone/rclone.conf
@@ -16,7 +19,8 @@ acl = private
 EOF
 fi
 
-# 2. 恢复数据 (保持不变)
+# 2. Restore Backup
+# Note: It is normal to see "No such file" errors on the very first run.
 if [ -n "$R2_BUCKET" ]; then
     if rclone lsf "r2:$R2_BUCKET/npm_backup.tar.gz" >/dev/null 2>&1; then
         echo "[INFO] Restoring backup..."
@@ -28,29 +32,29 @@ if [ -n "$R2_BUCKET" ]; then
     fi
 fi
 
-# 3. 启动 Tailscale (关键修改)
-# 确保目录存在
+# 3. Start Tailscale
 mkdir -p /var/lib/tailscale /var/run/tailscale
 
-# 启动守护进程
-tailscaled --tun=userspace-networking --state=/var/lib/tailscale/tailscaled.state --socket=/tmp/tailscaled.sock &
+# Start Daemon
+# We pass the socket explicitly here, and use userspace networking for HF
+tailscaled --tun=userspace-networking --state=/var/lib/tailscale/tailscaled.state --socket=$TS_SOCKET &
 sleep 5
 
 if [ -n "$TS_AUTH_KEY" ]; then
-    # 构建参数
-    TS_ARGS="--socket=/tmp/tailscaled.sock --authkey=${TS_AUTH_KEY} --hostname=${TS_NAME:-npm-hf} --ssh --accept-routes --advertise-exit-node"
+    # Start Client
+    # REMOVED --socket from here, because we exported TS_SOCKET at the top of the script
+    TS_ARGS="--authkey=${TS_AUTH_KEY} --hostname=${TS_NAME:-npm-hf} --ssh --accept-routes"
     
-    # 如果设置了 TS_TAGS 环境变量，则添加 (解决 tags 400 错误)
     if [ -n "$TS_TAGS" ]; then
         TS_ARGS="$TS_ARGS --advertise-tags=${TS_TAGS}"
     fi
 
-    # 强制重新登录 (防止状态文件与新 Key 冲突)
+    # Bring up the node
     tailscale up $TS_ARGS --reset
     echo "[INFO] Tailscale up command executed."
 fi
 
-# 4. 启动定时备份 (保持不变)
+# 4. Start Backup Loop
 (
     while true; do
         sleep 14400
@@ -58,11 +62,10 @@ fi
     done
 ) &
 
-# 5. 端口映射 (关键修改：改为 TCP:127.0.0.1:80)
-# HF (HTTPS) -> HF LoadBalancer (HTTP 7860) -> Socat -> NPM (HTTP 80)
+# 5. Port Mapping (HF 7860 -> NPM 80)
 socat TCP-LISTEN:7860,fork,bind=0.0.0.0 TCP:127.0.0.1:80 &
 echo "[INFO] Port 80 mapped to 7860 via socat."
 
-# 6. 启动 NPM
+# 6. Start NPM
 echo "[INFO] Starting NPM..."
 exec /init
