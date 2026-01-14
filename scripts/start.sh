@@ -15,10 +15,10 @@ export R2_BUCKET="hf-backups/npm"
 # 2. 检查敏感变量
 # ==========================================
 if [ -z "$R2_SECRET_ACCESS_KEY" ]; then
-    echo "[WARNING] R2_SECRET_ACCESS_KEY is missing! Backup/Restore will fail."
+    echo "[WARNING] R2_SECRET_ACCESS_KEY is missing!"
 fi
 if [ -z "$TS_AUTH_KEY" ]; then
-    echo "[WARNING] TS_AUTH_KEY is missing! Tailscale will not start."
+    echo "[WARNING] TS_AUTH_KEY is missing!"
 fi
 
 # ==========================================
@@ -35,64 +35,44 @@ secret_access_key = $R2_SECRET_ACCESS_KEY
 endpoint = $R2_ENDPOINT
 acl = private
 EOF
-    echo "[INFO] Rclone config generated."
 fi
 
 # ==========================================
-# 4. 恢复数据 (优化版：先检查文件是否存在)
+# 4. 恢复数据
 # ==========================================
 if [ -n "$R2_SECRET_ACCESS_KEY" ] && [ -n "$R2_BUCKET" ]; then
-    # 尝试下载
     if rclone copy "r2:$R2_BUCKET/npm_backup.tar.gz" /tmp/ 2>/dev/null; then
         if [ -f "/tmp/npm_backup.tar.gz" ]; then
-            echo "[INFO] Backup downloaded. Restoring..."
+            echo "[INFO] Restoring backup..."
             tar -xzf /tmp/npm_backup.tar.gz -C /
             rm /tmp/npm_backup.tar.gz
-            echo "[INFO] Restore complete."
-        else
-            echo "[INFO] Remote file not found (Fresh install)."
         fi
     else
-        echo "[INFO] Rclone download skipped (Fresh install or R2 error)."
+        echo "[INFO] Fresh install (no backup found)."
     fi
 fi
 
 # ==========================================
-# 5. 启动 Tailscale (关键修复)
+# 5. 启动 Tailscale
 # ==========================================
 mkdir -p /var/lib/tailscale /var/run/tailscale
-
-# 启动守护进程
 tailscaled --tun=userspace-networking --state=/var/lib/tailscale/tailscaled.state --socket=$TS_SOCKET &
 sleep 5
 
 if [ -n "$TS_AUTH_KEY" ]; then
-    # 组装命令
     TS_CMD="tailscale --socket=$TS_SOCKET up --authkey=${TS_AUTH_KEY} --hostname=${TS_NAME} --ssh --accept-routes --reset"
-    
     if [ -n "$TS_TAGS" ]; then
         TS_CMD="$TS_CMD --advertise-tags=${TS_TAGS}"
     fi
-
-    echo "[INFO] Running Tailscale up..."
-    
-    # 运行并捕获错误
-    if $TS_CMD; then
-        echo "[SUCCESS] Tailscale is ONLINE!"
-    else
-        echo "!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!"
-        echo "[ERROR] Tailscale failed to connect! Check your Key below:"
-        echo "1. Is the key 'Reusable'?"
-        echo "2. Did you set Tags in the key but not in the script?"
-        echo "3. Is the key expired?"
-        echo "!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!"
-        # 不退出，让 NPM 继续运行，方便查看日志
-    fi
+    echo "[INFO] Tailscale up..."
+    $TS_CMD
 fi
 
 # ==========================================
-# 6. 启动定时备份循环 (每4小时)
+# 6. 后台任务：定时备份 & 端口转发
 # ==========================================
+
+# 6.1 定时备份循环
 (
     while true; do
         sleep 14400
@@ -100,34 +80,28 @@ fi
     done
 ) &
 
-# ==========================================
-# 7. 启动 NPM
-# ==========================================
-echo "[INFO] Starting NPM..."
-# Start NPM in background
-/init &
+# 6.2 智能端口转发 (关键修改)
+# 将这部分逻辑放入后台，不阻塞主进程启动 NPM
+(
+    echo "[INFO] Waiting for NPM port 80..."
+    # 使用 Bash 内置功能检测端口，不需要 nc
+    timeout=60
+    while ! (echo > /dev/tcp/127.0.0.1/80) >/dev/null 2>&1; do
+        sleep 1
+        timeout=$((timeout - 1))
+        if [ $timeout -le 0 ]; then
+            echo "[ERROR] NPM port 80 check timeout!"
+            break
+        fi
+    done
+    
+    echo "[INFO] Port 80 is UP! Starting Socat..."
+    socat TCP-LISTEN:7860,fork,bind=0.0.0.0 TCP:127.0.0.1:80
+) &
 
 # ==========================================
-# 8. Smart Port Mapping (Wait for Port 80)
+# 7. 启动 NPM (必须作为 PID 1)
 # ==========================================
-echo "[INFO] Waiting for NPM to be ready on port 80..."
-
-# Loop to check if port 80 is open using pure Bash
-timeout=60
-while ! (echo > /dev/tcp/127.0.0.1/80) >/dev/null 2>&1; do
-  sleep 1
-  timeout=$((timeout - 1))
-  if [ $timeout -le 0 ]; then
-    echo "[ERROR] NPM failed to start within 60 seconds!"
-    # Even if it fails, we don't exit, we just try to start socat anyway
-    break
-  fi
-done
-
-echo "[INFO] NPM appears ready (or timeout)! Starting Socat..."
-
-# Start Port Forwarding
-socat TCP-LISTEN:7860,fork,bind=0.0.0.0 TCP:127.0.0.1:80 &
-
-# Keep container alive
-wait
+echo "[INFO] Starting NPM (Exec PID 1)..."
+# 使用 exec 让 NPM 替代当前 Shell 成为 PID 1，解决 s6 报错
+exec /init
