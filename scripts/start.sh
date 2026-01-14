@@ -3,32 +3,27 @@
 echo "[INFO] Starting Container..."
 
 # ==========================================
-# 1. 硬编码配置区域 (非敏感信息)
+# 1. 硬编码配置区域
 # ==========================================
-# Tailscale 设置
 export TS_SOCKET=/tmp/tailscaled.sock
-export TS_NAME="npm"  # 你的 Tailscale 设备名
-
-# R2 配置 (非敏感部分)
+export TS_NAME="npm"
 export R2_ACCESS_KEY_ID="75e72cddecc51b32deab13873c967000"
 export R2_ENDPOINT="https://6e84f688bfe062834470070a2d946be5.r2.cloudflarestorage.com"
 export R2_BUCKET="hf-backups/npm"
 
 # ==========================================
-# 2. 检查敏感变量 (必须在 HF 后台填入)
+# 2. 检查敏感变量
 # ==========================================
 if [ -z "$R2_SECRET_ACCESS_KEY" ]; then
     echo "[WARNING] R2_SECRET_ACCESS_KEY is missing! Backup/Restore will fail."
 fi
-
 if [ -z "$TS_AUTH_KEY" ]; then
     echo "[WARNING] TS_AUTH_KEY is missing! Tailscale will not start."
 fi
 
 # ==========================================
-# 3. 生成 Rclone 配置文件
+# 3. 生成 Rclone 配置
 # ==========================================
-# 只有当 Secret Key 存在时才生成配置
 if [ -n "$R2_SECRET_ACCESS_KEY" ]; then
     mkdir -p /root/.config/rclone
     cat <<EOF > /root/.config/rclone/rclone.conf
@@ -44,22 +39,26 @@ EOF
 fi
 
 # ==========================================
-# 4. 恢复数据
+# 4. 恢复数据 (优化版：先检查文件是否存在)
 # ==========================================
 if [ -n "$R2_SECRET_ACCESS_KEY" ] && [ -n "$R2_BUCKET" ]; then
-    if rclone lsf "r2:$R2_BUCKET/npm_backup.tar.gz" >/dev/null 2>&1; then
-        echo "[INFO] Restoring backup from R2..."
-        rclone copy "r2:$R2_BUCKET/npm_backup.tar.gz" /tmp/
-        tar -xzf /tmp/npm_backup.tar.gz -C /
-        rm /tmp/npm_backup.tar.gz
-        echo "[INFO] Restore complete."
+    # 尝试下载
+    if rclone copy "r2:$R2_BUCKET/npm_backup.tar.gz" /tmp/ 2>/dev/null; then
+        if [ -f "/tmp/npm_backup.tar.gz" ]; then
+            echo "[INFO] Backup downloaded. Restoring..."
+            tar -xzf /tmp/npm_backup.tar.gz -C /
+            rm /tmp/npm_backup.tar.gz
+            echo "[INFO] Restore complete."
+        else
+            echo "[INFO] Remote file not found (Fresh install)."
+        fi
     else
-        echo "[INFO] No remote backup found. Starting fresh."
+        echo "[INFO] Rclone download skipped (Fresh install or R2 error)."
     fi
 fi
 
 # ==========================================
-# 5. 启动 Tailscale
+# 5. 启动 Tailscale (关键修复)
 # ==========================================
 mkdir -p /var/lib/tailscale /var/run/tailscale
 
@@ -67,21 +66,19 @@ mkdir -p /var/lib/tailscale /var/run/tailscale
 tailscaled --tun=userspace-networking --state=/var/lib/tailscale/tailscaled.state --socket=$TS_SOCKET &
 sleep 5
 
-# 仅当提供了 Auth Key 时才启动 Client
 if [ -n "$TS_AUTH_KEY" ]; then
     # 组装参数
-    TS_ARGS="--authkey=${TS_AUTH_KEY} --hostname=${TS_NAME} --ssh --accept-routes"
+    # 【关键修改】--socket 必须放在 'up' 命令之前！
+    # 语法：tailscale --socket=xxx up --authkey=xxx
     
-    # 如果有 Tags 变量，则添加 (可选)
+    TS_CMD="tailscale --socket=$TS_SOCKET up --authkey=${TS_AUTH_KEY} --hostname=${TS_NAME} --ssh --accept-routes --reset"
+    
     if [ -n "$TS_TAGS" ]; then
-        TS_ARGS="$TS_ARGS --advertise-tags=${TS_TAGS}"
+        TS_CMD="$TS_CMD --advertise-tags=${TS_TAGS}"
     fi
 
-    # 启动 (带 --reset 防止状态冲突)
-    tailscale up $TS_ARGS --reset
-    echo "[INFO] Tailscale up command executed."
-else
-    echo "[WARNING] Tailscale skipped because TS_AUTH_KEY is not set."
+    echo "[INFO] Running Tailscale up..."
+    $TS_CMD
 fi
 
 # ==========================================
