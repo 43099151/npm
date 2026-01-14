@@ -52,22 +52,40 @@ if [ -n "$R2_SECRET_ACCESS_KEY" ] && [ -n "$R2_BUCKET" ]; then
     fi
 fi
 
-# ==========================================
 # 5. 启动 Tailscale
 # ==========================================
 mkdir -p /var/lib/tailscale /var/run/tailscale
+# 启动守护进程
 tailscaled --tun=userspace-networking --state=/var/lib/tailscale/tailscaled.state --socket=$TS_SOCKET &
+
+# 等待 socket 生成
+echo "[INFO] Waiting for Tailscale socket..."
 sleep 5
 
 if [ -n "$TS_AUTH_KEY" ]; then
+    # 拼接启动命令
     TS_CMD="tailscale --socket=$TS_SOCKET up --authkey=${TS_AUTH_KEY} --hostname=${TS_NAME} --ssh --accept-routes --reset"
     if [ -n "$TS_TAGS" ]; then
         TS_CMD="$TS_CMD --advertise-tags=${TS_TAGS}"
     fi
-    echo "[INFO] Tailscale up..."
+    
+    echo "[INFO] Bringing Tailscale UP..."
     $TS_CMD
-fi
 
+    # ==========================================
+    # [关键修改] 自动开启 Funnel (只暴露 81 端口)
+    # ==========================================
+    (
+        sleep 10
+        echo "[INFO] Enabling Funnel for Port 81..."
+        
+        # 将容器内的 81 端口 (NPM Admin) 映射到 Tailscale 公网 URL 的 443 端口
+        # 访问地址: https://<machine-name>.<tailnet>.ts.net
+        tailscale --socket=$TS_SOCKET funnel --bg --yes --https=443 81
+        
+        echo "[INFO] Funnel configuration applied: Port 81 -> HTTPS 443"
+    ) &
+fi
 # ==========================================
 # 6. 后台任务：定时备份 & 端口转发
 # ==========================================
