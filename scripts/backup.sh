@@ -4,7 +4,7 @@
 # 1. 配置区域 (硬编码 Bucket 名称)
 # ==========================================
 # 必须与 start.sh 中的设置保持一致
-R2_BUCKET="hf-backups/npm"
+R2_BUCKET="hf--backups/npm"
 
 # ==========================================
 # 2. 执行备份
@@ -28,7 +28,7 @@ tar -czf "$BACKUP_FILE" \
 if [ -f "$BACKUP_FILE" ]; then
     # 使用硬编码的 R2_BUCKET 变量
     # 增加 --retries 防止网络波动
-    if rclone copy "$BACKUP_FILE" "r2:$R2_BUCKET/" --overwrite --retries 3; then
+    if rclone copy "$BACKUP_FILE" "r2:$R2_BUCKET/" --retries 3; then
         echo "[$TIMESTAMP] Backup uploaded to R2 successfully."
         rm "$BACKUP_FILE"
     else
