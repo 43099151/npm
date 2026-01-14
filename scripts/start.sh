@@ -101,13 +101,30 @@ fi
 ) &
 
 # ==========================================
-# 7. 端口映射 (HF 7860 -> NPM 80)
-# ==========================================
-socat TCP-LISTEN:7860,fork,bind=0.0.0.0 TCP:127.0.0.1:80 &
-echo "[INFO] Port 80 mapped to 7860 via socat."
-
-# ==========================================
-# 8. 启动 NPM
+# 7. 启动 NPM
 # ==========================================
 echo "[INFO] Starting NPM..."
-exec /init
+# 让 NPM 在后台启动，这样我们才能继续执行脚本去检查端口
+/init &
+
+# ==========================================
+# 8. 智能端口映射 (等待 NPM 80 端口通了再映射)
+# ==========================================
+echo "[INFO] Waiting for NPM to be ready on port 80..."
+# 循环检查本地 80 端口是否通了
+timeout=60
+while ! nc -z 127.0.0.1 80; do
+  sleep 1
+  timeout=$((timeout - 1))
+  if [ $timeout -le 0 ]; then
+    echo "[ERROR] NPM failed to start within 60 seconds!"
+    exit 1
+  fi
+done
+echo "[INFO] NPM is ready! Starting Socat..."
+
+# NPM 准备好后，再开启转发，确保 HF 检查时一击即中
+socat TCP-LISTEN:7860,fork,bind=0.0.0.0 TCP:127.0.0.1:80 &
+
+# 挂起脚本，防止容器退出
+wait
