@@ -10,7 +10,7 @@ export TS_NAME="npm"
 export R2_ACCESS_KEY_ID="75e72cddecc51b32deab13873c967000"
 export R2_ENDPOINT="https://6e84f688bfe062834470070a2d946be5.r2.cloudflarestorage.com"
 export R2_BUCKET="hf--backups/npm"
-export R2_ACCESS_KEY_ID=${R2_ACCESS_KEY_ID:-""}
+export R2_SECRET_ACCESS_KEY=${R2_SECRET_ACCESS_KEY:-""}
 export TS_AUTH_KEY=${TS_AUTH_KEY:-""}
 # ==========================================
 # 2. 检查敏感变量
