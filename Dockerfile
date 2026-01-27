@@ -10,11 +10,23 @@ RUN apt-get update && apt-get install -y curl tar unzip socat binutils
 RUN cp /usr/bin/socat /tmp/socat
 
 # 2. 下载 Tailscale
-WORKDIR /tmp/tailscale
-RUN curl -fsSL "https://pkgs.tailscale.com/stable/tailscale_1.92.5_amd64.tgz" -o tailscale.tgz && \
-    tar -xzf tailscale.tgz && \
-    mv tailscale_1.92.5_amd64/tailscale /tmp/tailscale/tailscale && \
-    mv tailscale_1.92.5_amd64/tailscaled /tmp/tailscale/tailscaled
+ARG TS_VERSION=""
+ARG TS_ARCH=amd64
+RUN set -eux; \
+    if [ -z "$TS_VERSION" ] || [ "$TS_VERSION" = "latest" ]; then \
+      TS_VERSION=$(curl -fsSL https://tailscale.com/changelog/index.xml | sed -n 's/.*<title>Tailscale v\([0-9][0-9.]*\).*/\1/p' | head -n1); \
+      if [ -z "$TS_VERSION" ]; then \
+        echo "Failed to detect TS_VERSION from changelog; aborting"; exit 1; \
+      fi; \
+    fi; \
+    echo "Installing tailscale version: $TS_VERSION (arch: $TS_ARCH)"; \
+    curl -fsSL "https://pkgs.tailscale.com/stable/tailscale_${TS_VERSION}_${TS_ARCH}.tgz" -o /tmp/tailscale.tgz; \
+    cd /tmp; \
+    tar xzf tailscale.tgz; \
+    mv "tailscale_${TS_VERSION}_${TS_ARCH}/tailscaled" /usr/sbin/tailscaled; \
+    mv "tailscale_${TS_VERSION}_${TS_ARCH}/tailscale" /usr/bin/tailscale; \
+    chmod +x /usr/sbin/tailscaled /usr/bin/tailscale; \
+    rm -rf /tmp/tailscale.tgz /tmp/"tailscale_${TS_VERSION}_${TS_ARCH}"
 
 # 3. 下载 Rclone
 WORKDIR /tmp/rclone
