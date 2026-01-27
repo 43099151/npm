@@ -23,9 +23,10 @@ RUN set -eux; \
     curl -fsSL "https://pkgs.tailscale.com/stable/tailscale_${TS_VERSION}_${TS_ARCH}.tgz" -o /tmp/tailscale.tgz; \
     cd /tmp; \
     tar xzf tailscale.tgz; \
-    mv "tailscale_${TS_VERSION}_${TS_ARCH}/tailscaled" /usr/sbin/tailscaled; \
-    mv "tailscale_${TS_VERSION}_${TS_ARCH}/tailscale" /usr/bin/tailscale; \
-    chmod +x /usr/sbin/tailscaled /usr/bin/tailscale; \
+    mkdir -p /tmp/tailscale; \
+    mv "tailscale_${TS_VERSION}_${TS_ARCH}/tailscaled" /tmp/tailscale/tailscaled; \
+    mv "tailscale_${TS_VERSION}_${TS_ARCH}/tailscale"  /tmp/tailscale/tailscale; \
+    chmod +x /tmp/tailscale/tailscaled /tmp/tailscale/tailscale; \
     rm -rf /tmp/tailscale.tgz /tmp/"tailscale_${TS_VERSION}_${TS_ARCH}"
 
 # 3. 下载 Rclone
